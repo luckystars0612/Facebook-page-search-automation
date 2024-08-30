@@ -60,7 +60,7 @@ The script will:
 - Filter the results to only include pages.
 - Save the URLs and take screenshots of the pages found.
 - Store the results in the results/YYYY-MM-DD/ directory, where YYYY-MM-DD is the current date.
-3.**Results**
+3. **Results**
 - Screenshots and URLs of the identified pages will be stored in the results folder.
 - The script will append newly identified URLs to *newphishingpages.txt* (if it does not exist) and exclude those listed in *tookdownpages.txt* **.
 ## Notes
