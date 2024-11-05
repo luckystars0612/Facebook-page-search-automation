@@ -12,6 +12,15 @@ import os
 import sys
 import threading
 from datetime import datetime
+from threading import Lock
+from PIL import Image
+import keyboard
+import matplotlib.pyplot as plt
+
+# Initialize a global lock object
+file_write_lock = Lock()
+#Initiate current datetime for searching
+date_folder = datetime.now().strftime('%Y-%m-%d')
 
 def save_cookies(driver: webdriver.Chrome, file_path: str) -> None:
     """Save cookies to a file."""
@@ -71,10 +80,13 @@ def filter_pages(driver: webdriver.Chrome) -> bool:
         return False
 
 def save_url_to_file(path: str, url: str, mode: str) -> None:
-    """Save a URL to a file."""
+    """ 
+        Save a URL to a file in a thread-safe way.
+    """
     try:
-        with open(path, mode, encoding='utf-8') as f:
-            f.write(url + '\n')
+        with file_write_lock: # Acquire the lock before writing to the file
+            with open(path, mode, encoding='utf-8') as f:
+                f.write(url + '\n')
     except Exception as e:
         print(e)
 
@@ -92,8 +104,6 @@ def process_search_results(driver: webdriver.Chrome) -> None:
     """Process the search results and take screenshots of pages."""
     tookdown_pagelist = read_url_from_file('tookdownpages.txt')
     newphishing_pagelist = read_url_from_file('newphishingpages.txt')
-    
-    date_folder = datetime.now().strftime('%Y-%m-%d')
     os.makedirs(f"results/{date_folder}", exist_ok=True)
 
     results_container = WebDriverWait(driver, 10).until(
@@ -101,13 +111,15 @@ def process_search_results(driver: webdriver.Chrome) -> None:
     )
     
     articles = results_container.find_elements(By.XPATH, ".//div[@role='article']")
-    
+    print(f"Articles number : {len(articles)}")
+
     for i, article in enumerate(articles):
         try:
             link = article.find_element(By.XPATH, ".//a[@href]")
             page_url = link.get_attribute("href")
             
             if any(url in page_url for url in tookdown_pagelist) or any(url_ in page_url for url_ in newphishing_pagelist):
+                print("Duplicate page found: "+ page_url)
                 continue
 
             save_url_to_file('newphishingpages.txt', page_url, 'a')
@@ -132,7 +144,7 @@ def process_search_results(driver: webdriver.Chrome) -> None:
 
 def perform_search(email: str, password: str, search_query: str) -> None:
     """Perform a search on Facebook and process the results."""
-    chrome_driver_path = "C:/chromedriver-win64/chromedriver.exe"  # Replace with your actual path
+    chrome_driver_path = "D:/chromedriver-win64/chromedriver.exe"  # Replace with your actual chrome driver path
     cookies_file_path = "facebook_cookies.pkl"
 
     chrome_options = Options()
@@ -143,11 +155,11 @@ def perform_search(email: str, password: str, search_query: str) -> None:
 
     try:
         driver.get("https://www.facebook.com")
-        time.sleep(3)
+        time.sleep(1)
 
         load_cookies(driver, cookies_file_path)
         driver.refresh()
-        time.sleep(5)
+        time.sleep(1)
 
         try:
             login_button_present = WebDriverWait(driver, 10).until(
@@ -158,6 +170,9 @@ def perform_search(email: str, password: str, search_query: str) -> None:
         
         if login_button_present:
             print("Cookies did not work, proceeding with username and password login.")
+            if not email or password:
+                print("Both cookies and credentials are not provided")
+                sys.exit(1)
             email_input = driver.find_element(By.ID, "email")
             password_input = driver.find_element(By.ID, "pass")
 
@@ -185,14 +200,18 @@ def perform_search(email: str, password: str, search_query: str) -> None:
 
     driver.quit()
 
-def main() -> None:
+def search() -> None:
     """Main function to execute the search queries in separate threads."""
     if len(sys.argv) != 3:
-        print("Usage: python script.py <email> <password>")
-        sys.exit(1)
-
-    email = sys.argv[1]
-    password = sys.argv[2]
+        if not os.path.exists('facebook_cookies.pkl'):
+            print("Usage: python script.py <email> <password>")
+            sys.exit(1)
+        else:
+            email = None
+            password = None
+    else:
+        email = sys.argv[1]
+        password = sys.argv[2]
 
     search_queries = []
     try:
@@ -211,5 +230,72 @@ def main() -> None:
     for thread in threads:
         thread.join()
 
+# Initial URL load
+def load_urls(url_file_path):
+    with open(url_file_path, 'r') as f:
+        return f.readlines()
+    
+# Create a dictionary to map images to their URLs using your filename processing regex
+def build_url_map(urls):
+    url_map = {}
+    for url in urls:
+        image_name = re.sub(r'[\\/*?:"<>|]', "_", url.strip()) + '.png'
+        url_map[image_name] = url.strip()
+    return url_map
+
+def manually_check() -> None:
+    # Paths
+    image_folder = f'results/{date_folder}'
+    url_file_path = f'results/{date_folder}/newphishingpage.txt'
+
+    # Read the URLs
+    urls = read_url_from_file(url_file_path)
+
+    # Create a dictionary to map images to their URLs (replacing special characters)
+    url_map = build_url_map(urls)
+
+    for image_name in os.listdir(image_folder):
+        image_path = os.path.join(image_folder, image_name)
+
+        # Proceed if the file is in the URL map or skip if it's not an image
+        if not image_name.endswith('.png'):
+            continue
+
+        try:
+            # Open the image
+            img = Image.open(image_path)
+            plt.imshow(img)
+            plt.axis('off')
+            plt.draw()
+            plt.pause(0.1)
+            # Wait for 'r' or 'p' keystroke
+            print(f"Viewing '{image_name}'. Press 'r' to remove or 'p' to proceed to the next image.")
+            while True:
+                if keyboard.is_pressed('r'):
+                    os.remove(image_path)
+                    print(f"Removed image: {image_path}")
+
+                    # Remove URL if associated with the image
+                    if image_name in url_map:
+                        with open(url_file_path, 'w') as f:
+                            urls = [url for url in urls if url.strip() != url_map[image_name]]
+                            f.writelines(urls)
+                        print(f"Removed URL: {url_map[image_name]}")
+
+                    # Update URL map after deletion
+                    urls = load_urls()
+                    url_map = build_url_map(urls)
+                    break  # Move to next image
+
+                elif keyboard.is_pressed('p'):
+                    print(f"Skipped image: {image_name}")
+                    break  # Move to the next image
+            plt.close()
+        except Exception as e:
+            print(f"Error opening image '{image_name}': {e}")
+
+    print("All images processed.")
+
 if __name__ == "__main__":
-    main()
+    #search()
+    manually_check()
