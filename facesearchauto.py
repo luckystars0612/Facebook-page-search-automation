@@ -19,8 +19,18 @@ import matplotlib.pyplot as plt
 
 # Initialize a global lock object
 file_write_lock = Lock()
-#Initiate current datetime for searching
+
+#Initiate current datetime and setup folder for saving
 date_folder = datetime.now().strftime('%Y-%m-%d')
+os.makedirs(f'results/{date_folder}', exist_ok= True)
+# with open(f'results/{date_folder}/newphishingpage.txt', 'w') as file:
+#     file.write('')
+# file.close()
+
+#define chrome driver settings and facebook cookie
+chrome_driver_path = "D:/chromedriver-win64/chromedriver.exe"  # Replace with your actual chrome driver path
+cookies_file_path = "facebook_cookies.pkl"
+
 
 def save_cookies(driver: webdriver.Chrome, file_path: str) -> None:
     """Save cookies to a file."""
@@ -103,7 +113,7 @@ def read_url_from_file(file_path: str) -> list[str]:
 def process_search_results(driver: webdriver.Chrome) -> None:
     """Process the search results and take screenshots of pages."""
     tookdown_pagelist = read_url_from_file('tookdownpages.txt')
-    newphishing_pagelist = read_url_from_file('newphishingpages.txt')
+    newphishing_pagelist = read_url_from_file('phishingpages.txt')
     os.makedirs(f"results/{date_folder}", exist_ok=True)
 
     results_container = WebDriverWait(driver, 10).until(
@@ -122,7 +132,6 @@ def process_search_results(driver: webdriver.Chrome) -> None:
                 print("Duplicate page found: "+ page_url)
                 continue
 
-            save_url_to_file('newphishingpages.txt', page_url, 'a')
             file_name = re.sub(r'[\\/*?:"<>|]', "_", page_url.split("&", 1)[0])
             print(f"Page URL: {page_url}")
 
@@ -142,46 +151,22 @@ def process_search_results(driver: webdriver.Chrome) -> None:
         except Exception as e:
             print(f"Error processing article: {e}")
 
-def perform_search(email: str, password: str, search_query: str) -> None:
+def perform_search(search_query: str) -> None:
     """Perform a search on Facebook and process the results."""
-    chrome_driver_path = "D:/chromedriver-win64/chromedriver.exe"  # Replace with your actual chrome driver path
-    cookies_file_path = "facebook_cookies.pkl"
 
     chrome_options = Options()
     chrome_options.add_argument("--start-maximized")
-
-    service = Service(chrome_driver_path)
+    chrome_options.add_argument("--log-level=3")
+    service = Service(chrome_driver_path, log_path = os.devnull)
     driver = webdriver.Chrome(service=service, options=chrome_options)
 
     try:
         driver.get("https://www.facebook.com")
-        time.sleep(1)
+        time.sleep(5)
 
         load_cookies(driver, cookies_file_path)
         driver.refresh()
-        time.sleep(1)
-
-        try:
-            login_button_present = WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.XPATH, "//button[@name='login']"))
-            )
-        except:
-            login_button_present = False
-        
-        if login_button_present:
-            print("Cookies did not work, proceeding with username and password login.")
-            if not email or password:
-                print("Both cookies and credentials are not provided")
-                sys.exit(1)
-            email_input = driver.find_element(By.ID, "email")
-            password_input = driver.find_element(By.ID, "pass")
-
-            email_input.send_keys(email)
-            password_input.send_keys(password)
-            password_input.send_keys(Keys.RETURN)
-            time.sleep(5)
-
-            save_cookies(driver, cookies_file_path)
+        time.sleep(5)
 
     except Exception as e:
         print(f"Error during login: {e}")
@@ -202,17 +187,7 @@ def perform_search(email: str, password: str, search_query: str) -> None:
 
 def search() -> None:
     """Main function to execute the search queries in separate threads."""
-    if len(sys.argv) != 3:
-        if not os.path.exists('facebook_cookies.pkl'):
-            print("Usage: python script.py <email> <password>")
-            sys.exit(1)
-        else:
-            email = None
-            password = None
-    else:
-        email = sys.argv[1]
-        password = sys.argv[2]
-
+    
     search_queries = []
     try:
         with open('search_queries.txt', 'r', encoding='utf-8') as f:
@@ -223,7 +198,7 @@ def search() -> None:
 
     threads = []
     for query in search_queries:
-        thread = threading.Thread(target=perform_search, args=(email, password, query))
+        thread = threading.Thread(target=perform_search, args=(query,))
         threads.append(thread)
         thread.start()
 
@@ -239,7 +214,7 @@ def load_urls(url_file_path):
 def build_url_map(urls):
     url_map = {}
     for url in urls:
-        image_name = re.sub(r'[\\/*?:"<>|]', "_", url.strip()) + '.png'
+        image_name = re.sub(r'[\\/*?:"<>|]', "_", url.split("&", 1)[0].strip()) + '.png'
         url_map[image_name] = url.strip()
     return url_map
 
@@ -278,12 +253,15 @@ def manually_check() -> None:
                     # Remove URL if associated with the image
                     if image_name in url_map:
                         with open(url_file_path, 'w') as f:
-                            urls = [url for url in urls if url.strip() != url_map[image_name]]
-                            f.writelines(urls)
+                            #urls = [url for url in urls if url.strip() != url_map[image_name]]
+                            for url in urls:
+                                if url.strip() != url_map[image_name]:
+                                    f.write(url.strip()+'\n')
                         print(f"Removed URL: {url_map[image_name]}")
+                        f.close()
 
                     # Update URL map after deletion
-                    urls = load_urls()
+                    urls = load_urls(url_file_path)
                     url_map = build_url_map(urls)
                     break  # Move to next image
 
@@ -296,6 +274,67 @@ def manually_check() -> None:
 
     print("All images processed.")
 
+    #add current searching to original phishing page
+    with open('phishingpages.txt','a',encoding='utf-8') as file:
+        urls = read_url_from_file(url_file_path)
+        for url in urls:
+            file.write(url.strip()+'\n')
+    file.close()
+
+def check_login():
+    """
+        check whether cookies for login is on current path.
+    """
+    if not os.path.exists('facebook_cookies.pkl'):
+        get_cookies()
+
+def get_cookies():
+    """
+        get facebook cookies for automatically login.
+    """
+    chrome_options = Options()
+    chrome_options.add_argument("--start-maximized")
+    chrome_options.add_argument("--log-level=3")
+    service = Service(chrome_driver_path, log_path = os.devnull)
+    driver = webdriver.Chrome(service=service, options=chrome_options)
+    try:
+        driver.get("https://www.facebook.com")
+        time.sleep(1)
+
+        load_cookies(driver, cookies_file_path)
+        driver.refresh()
+        time.sleep(1)
+
+        try:
+            login_button_present = WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.XPATH, "//button[@name='login']"))
+            )
+        except:
+            login_button_present = False
+        
+        if login_button_present:
+            print("Cookies doesn't exist, require email and password to login.")
+            email = input('Email: ')
+            password = input('Password: ')
+            print(email)
+            print(password)
+            email_input = driver.find_element(By.ID, "email")
+            password_input = driver.find_element(By.ID, "pass")
+
+            email_input.send_keys(email)
+            password_input.send_keys(password)
+            password_input.send_keys(Keys.RETURN)
+            time.sleep(5)
+
+            save_cookies(driver, cookies_file_path)
+
+    except Exception as e:
+        print(f"Error during login: {e}")
+        driver.quit()
+        return
+
+
 if __name__ == "__main__":
-    #search()
+    check_login()
+    search()
     manually_check()
