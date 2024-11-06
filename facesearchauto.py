@@ -18,7 +18,8 @@ import keyboard
 import matplotlib.pyplot as plt
 
 # Initialize a global lock object
-file_write_lock = Lock()
+lock = Lock()
+set_current_urls = set()
 
 #Initiate current datetime and setup folder for saving
 date_folder = datetime.now().strftime('%Y-%m-%d')
@@ -94,9 +95,8 @@ def save_url_to_file(path: str, url: str, mode: str) -> None:
         Save a URL to a file in a thread-safe way.
     """
     try:
-        with file_write_lock: # Acquire the lock before writing to the file
-            with open(path, mode, encoding='utf-8') as f:
-                f.write(url + '\n')
+        with open(path, mode, encoding='utf-8') as f:
+            f.write(url + '\n')
     except Exception as e:
         print(e)
 
@@ -139,13 +139,18 @@ def process_search_results(driver: webdriver.Chrome) -> None:
             driver.switch_to.window(driver.window_handles[-1])
             driver.get(page_url)
 
-            WebDriverWait(driver, 20).until(
+            WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located((By.XPATH, "//div[@role='main']"))
             )
-
-            save_url_to_file(f"results/{date_folder}/newphishingpage.txt", page_url, 'a')
-            driver.save_screenshot(f"results/{date_folder}/{file_name}.png")
-
+            try:
+                with lock:
+                    if page_url not in set_current_urls:
+                        save_url_to_file(f"results/{date_folder}/newphishingpage.txt", page_url.split("&", 1)[0], 'a')
+                        driver.save_screenshot(f"results/{date_folder}/{file_name}.png")
+                        set_current_urls.add(page_url)
+            except Exception as e:
+                print(f"Error processing article for URL {page_url}: {e}")
+                    
             driver.close()
             driver.switch_to.window(driver.window_handles[0])
         except Exception as e:
@@ -162,11 +167,11 @@ def perform_search(search_query: str) -> None:
 
     try:
         driver.get("https://www.facebook.com")
-        time.sleep(5)
+        time.sleep(1)
 
         load_cookies(driver, cookies_file_path)
         driver.refresh()
-        time.sleep(5)
+        time.sleep(1)
 
     except Exception as e:
         print(f"Error during login: {e}")
@@ -204,6 +209,8 @@ def search() -> None:
 
     for thread in threads:
         thread.join()
+
+
 
 # Initial URL load
 def load_urls(url_file_path):
